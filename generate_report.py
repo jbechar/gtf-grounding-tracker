@@ -3,7 +3,6 @@ GTF Grounding Tracker — single-command report generator.
 Run: python generate_report.py
 """
 
-import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -15,8 +14,9 @@ import plotly.io as pio
 # Paths
 # ---------------------------------------------------------------------------
 ROOT = Path(__file__).parent
-DATA_FILE = ROOT / "data" / "grounding_counts.csv"
-DOCS_DIR = ROOT / "docs"
+DATA_FILE  = ROOT / "data" / "grounding_counts.csv"
+COMMS_FILE = ROOT / "data" / "wizz_air_comms.csv"
+DOCS_DIR   = ROOT / "docs"
 REPORT_FILE = DOCS_DIR / "index.html"
 
 DOCS_DIR.mkdir(exist_ok=True)
@@ -40,6 +40,10 @@ df = pd.read_csv(DATA_FILE, parse_dates=["date"])
 df["airline"] = df["airline"].str.strip()
 df_global   = df[df["airline"] == "Global"].sort_values("date").copy()
 df_airlines = df[df["airline"] != "Global"].copy()
+
+df_comms = pd.read_csv(COMMS_FILE, parse_dates=["date"])
+df_comms = df_comms.sort_values("date").reset_index(drop=True)
+df_wizz  = df_airlines[df_airlines["airline"] == "Wizz Air"].sort_values("date").copy()
 
 
 # ---------------------------------------------------------------------------
@@ -219,12 +223,239 @@ def chart3() -> str:
 
 
 # ---------------------------------------------------------------------------
+# Sentiment helpers
+# ---------------------------------------------------------------------------
+SENTIMENT_COLOR = {
+    1: "#d62728",   # very pessimistic — red
+    2: "#ff7f0e",   # pessimistic — orange
+    3: "#bcbd22",   # neutral — gold
+    4: "#2eaa6e",   # optimistic — green  (reuse PALETTE mid)
+    5: "#17becf",   # very optimistic — teal
+}
+SENTIMENT_LABEL = {
+    1: "Very Pessimistic",
+    2: "Pessimistic",
+    3: "Neutral",
+    4: "Optimistic",
+    5: "Very Optimistic",
+}
+
+
+# ---------------------------------------------------------------------------
+# Chart 4 — Wizz Air grounding trajectory vs PR moments
+# ---------------------------------------------------------------------------
+def chart4() -> str:
+    fig = go.Figure()
+
+    # Grounding line
+    fig.add_trace(go.Scatter(
+        x=df_wizz["date"],
+        y=df_wizz["grounded_aircraft"],
+        mode="lines+markers",
+        name="Aircraft Grounded (actual)",
+        line=dict(color=PALETTE["primary"], width=2.5),
+        marker=dict(size=9, color=PALETTE["primary"]),
+        fill="tozeroy",
+        fillcolor="rgba(26,111,181,0.08)",
+        hovertemplate="<b>%{x|%b %Y}</b><br>Grounded: %{y}<extra></extra>",
+    ))
+
+    # PR event markers, coloured by sentiment
+    for _, row in df_comms.iterrows():
+        score = int(row["sentiment_score"])
+        color = SENTIMENT_COLOR.get(score, "#888")
+        label = SENTIMENT_LABEL.get(score, "")
+        short_headline = row["headline"][:55] + ("…" if len(row["headline"]) > 55 else "")
+        fig.add_trace(go.Scatter(
+            x=[row["date"]],
+            y=[0],
+            mode="markers",
+            name=short_headline,
+            marker=dict(size=14, color=color, symbol="star", line=dict(color="white", width=1)),
+            hovertemplate=(
+                f"<b>{row['date'].strftime('%b %Y')}</b><br>"
+                f"<b>{row['source_type'].replace('_', ' ').title()}</b><br>"
+                f"{row['headline']}<br>"
+                f"Sentiment: {label}<br>"
+                f"<i>{row['key_claim'][:120]}…</i><extra></extra>"
+            ),
+            showlegend=False,
+        ))
+
+    # Claimed resolution timeline annotations — use shape + annotation separately
+    # (add_vline with string x values is unreliable in older Plotly builds)
+    timeline_claims = [
+        (pd.Timestamp("2026-01-01"), "Original target: end-2026", PALETTE["mid"]),
+        (pd.Timestamp("2027-01-01"), "Revised target: end-2027", PALETTE["accent"]),
+    ]
+    for ts, label_text, color in timeline_claims:
+        x_ms = ts.value // 10**6   # epoch milliseconds for Plotly shapes
+        fig.add_shape(
+            type="line",
+            x0=x_ms, x1=x_ms, y0=0, y1=1,
+            xref="x", yref="paper",
+            line=dict(dash="dot", color=color, width=1.5),
+        )
+        fig.add_annotation(
+            x=x_ms, y=0.98, xref="x", yref="paper",
+            text=label_text, showarrow=False,
+            font=dict(size=10, color=color),
+            xanchor="left", yanchor="top",
+            bgcolor="rgba(255,255,255,0.7)",
+        )
+
+    # Sentiment legend as invisible dummy traces
+    for score, label in SENTIMENT_LABEL.items():
+        fig.add_trace(go.Scatter(
+            x=[None], y=[None],
+            mode="markers",
+            marker=dict(size=10, color=SENTIMENT_COLOR[score], symbol="star"),
+            name=f"PR: {label}",
+            showlegend=True,
+        ))
+
+    fig.update_layout(
+        **BASE_LAYOUT,
+        title=dict(text="Wizz Air: Grounding Trajectory vs Public Narrative Moments", font=dict(size=15, color="#222")),
+        xaxis=dict(title="Date", tickformat="%b %Y", showgrid=True, gridcolor="#e0e0e0"),
+        yaxis=dict(title="Wizz Air Aircraft Grounded", range=[0, 65],
+                   showgrid=True, gridcolor="#e0e0e0"),
+        legend=dict(x=0.01, y=0.99, bgcolor="rgba(255,255,255,0.85)", borderwidth=1,
+                    font=dict(size=10)),
+    )
+
+    print("  Built chart 4")
+    return fig_to_div(fig)
+
+
+# ---------------------------------------------------------------------------
+# Wizz Air Narrative vs Reality — HTML section
+# ---------------------------------------------------------------------------
+def _nearest_grounding(target_date: pd.Timestamp) -> str:
+    """Return grounded count for the Wizz Air data point closest to target_date."""
+    if df_wizz.empty:
+        return "n/a"
+    idx = (df_wizz["date"] - target_date).abs().idxmin()
+    row = df_wizz.loc[idx]
+    days_diff = abs((row["date"] - target_date).days)
+    count = int(row["grounded_aircraft"])
+    if days_diff > 120:
+        return f"{count} ⚠️ ({row['date'].strftime('%b %Y')} data)"
+    return str(count)
+
+
+def wizz_narrative_section() -> str:
+    # ── Timeline table ────────────────────────────────────────────────────
+    rows_html = []
+    for _, row in df_comms.iterrows():
+        score = int(row["sentiment_score"])
+        badge_color = SENTIMENT_COLOR.get(score, "#888")
+        badge_label = SENTIMENT_LABEL.get(score, "")
+        actual = _nearest_grounding(row["date"])
+        src_label = row["source_type"].replace("_", " ").title()
+        url = row["url"]
+        rows_html.append(f"""
+        <tr>
+          <td style="white-space:nowrap">{row['date'].strftime('%b %Y')}</td>
+          <td><span class="src-badge">{src_label}</span></td>
+          <td><a href="{url}" target="_blank" rel="noopener">{row['headline']}</a></td>
+          <td style="font-size:0.85rem;color:#555">{row['key_claim']}</td>
+          <td style="text-align:center;font-weight:700">{actual}</td>
+          <td><span class="sentiment-badge" style="background:{badge_color}">{badge_label}</span></td>
+        </tr>""")
+    timeline_table = "\n".join(rows_html)
+
+    # ── Slippage analysis ─────────────────────────────────────────────────
+    slippage_items = [
+        ("May 2024", "End of calendar 2026", "Initial P&W compensation agreement horizon"),
+        ("Nov 2024", "F27 (≈ Mar 2027)", "H1 FY2025 results — quietly pushed 3 months"),
+        ("Jun 2025", "End of calendar 2027", "FY2025 annual results — full 12-month slip acknowledged"),
+        ("Jul 2025", "March 2027", "Q1 FY2026 results — reiterated, no improvement"),
+        ("Jan 2026", "End of calendar 2027", "Q3 FY2026 — P&W compensation now extended to match"),
+    ]
+    slippage_rows = "\n".join(
+        f"<tr><td>{d}</td><td>{t}</td><td>{n}</td></tr>"
+        for d, t, n in slippage_items
+    )
+
+    # ── Sentiment trend ───────────────────────────────────────────────────
+    scores = df_comms["sentiment_score"].tolist()
+    dates  = [d.strftime("%b %Y") for d in df_comms["date"]]
+    avg    = sum(scores) / len(scores)
+    trend_direction = "slightly more pessimistic" if scores[-1] < scores[0] else "broadly stable"
+    trend_items = "".join(
+        f'<div class="sent-pip" style="background:{SENTIMENT_COLOR[s]}" title="{dates[i]}: {SENTIMENT_LABEL[s]}"></div>'
+        for i, s in enumerate(scores)
+    )
+
+    return f"""
+  <div class="chart-section wizz-section">
+    <h2>Wizz Air: Public Narrative vs Reality</h2>
+
+    <div class="summary-box" style="border-color:#e85d26">
+      <p>
+        Wizz Air is the world's largest operator of Pratt &amp; Whitney GTF-powered aircraft and
+        has been one of the hardest-hit airlines in the engine crisis. This section tracks their
+        public statements — earnings calls, press releases, and CEO interviews — and compares them
+        against the actual grounding numbers on or near those same dates.
+        <br><br>
+        <strong>Key finding:</strong> Wizz Air's stated resolution timeline has slipped by at least
+        <strong>12 months</strong> (from end-2026 to end-2027), while language in public
+        communications turned noticeably more pessimistic through late 2025 before stabilising
+        as grounding counts finally began to fall.
+        <br><br>
+        <em>Note: Data before May 2024 is a gap — Wizz Air did not disclose specific grounded-aircraft
+        counts in public statements prior to their FY2024 annual results.</em>
+      </p>
+    </div>
+
+    <h3 style="font-size:1rem;margin:24px 0 10px;color:#444">Communications Timeline vs Actual Grounding Count</h3>
+    <div style="overflow-x:auto">
+      <table class="wizz-table">
+        <thead>
+          <tr>
+            <th>Date</th><th>Type</th><th>Headline / Source</th>
+            <th>Key Claim</th><th>Actual Grounded</th><th>Sentiment</th>
+          </tr>
+        </thead>
+        <tbody>
+{timeline_table}
+        </tbody>
+      </table>
+    </div>
+    <p class="table-note">⚠️ flag = nearest available data point is &gt;120 days from statement date.</p>
+
+    <h3 style="font-size:1rem;margin:28px 0 10px;color:#444">Timeline Slippage</h3>
+    <p style="font-size:0.9rem;color:#555;margin-bottom:10px">
+      Each time Wizz Air updated its forward guidance, the target resolution date moved further out.
+    </p>
+    <table class="wizz-table">
+      <thead><tr><th>Statement Date</th><th>Claimed Resolution</th><th>Context</th></tr></thead>
+      <tbody>{slippage_rows}</tbody>
+    </table>
+
+    <h3 style="font-size:1rem;margin:28px 0 8px;color:#444">Sentiment Tracker</h3>
+    <p style="font-size:0.9rem;color:#555;margin-bottom:10px">
+      Each pip represents one public communication, chronologically left-to-right.
+      Overall trend is <strong>{trend_direction}</strong>
+      (average score {avg:.1f}/5 where 1 = Very Pessimistic, 5 = Very Optimistic).
+    </p>
+    <div class="sent-row">{trend_items}</div>
+    <div class="sent-legend">
+      {"".join(f'<span><span class="sent-pip" style="background:{c};display:inline-block"></span> {l}</span>' for c, l in zip(SENTIMENT_COLOR.values(), SENTIMENT_LABEL.values()))}
+    </div>
+  </div>"""
+
+
+# ---------------------------------------------------------------------------
 # Generate chart HTML snippets
 # ---------------------------------------------------------------------------
 print("Generating charts …")
 div_chart1 = chart1()
 div_chart2 = chart2()
 div_chart3 = chart3()
+div_chart4 = chart4()
+div_wizz_narrative = wizz_narrative_section()
 
 
 # ---------------------------------------------------------------------------
@@ -262,6 +493,9 @@ SOURCES = [
     ("FlightGlobal / Cirium", "Fleet data and grounding counts, various dates 2024–2025"),
     ("RTX / Pratt &amp; Whitney Earnings Calls", "MRO output index and JetBlue fleet data (Q1 2025, Q1 2026)"),
     ("FlightGlobal", "Wizz Air, Volaris, VivaAerobus airline-level grounding figures"),
+    ("Wizz Air Earnings Calls (FY2024–Q3 FY2026)", "Wizz Air grounded-aircraft counts and forward guidance — see <code>data/wizz_air_comms.csv</code> for full citation list"),
+    ("Simple Flying / Aerotime / ch-aviation", "Wizz Air GTF communications tracking; interview quotes from CEO József Váradi and CFO Ian Malin"),
+    ("Wizz Air RNS / SEC Filings", "FY2025 Annual Results (5 Jun 2025); Q1 FY2026 Results (24 Jul 2025)"),
 ]
 
 sources_rows = "\n".join(
@@ -321,6 +555,19 @@ html = f"""<!DOCTYPE html>
   th {{ background: #e8f0fa; color: #1a6fb5; font-weight: 600; }}
   tr:last-child td {{ border-bottom: none; }}
   footer {{ margin-top: 48px; font-size: 0.8rem; color: #aaa; text-align: center; }}
+  .wizz-section {{ border-top: 3px solid #e85d26; padding-top: 24px; margin-top: 48px; }}
+  .wizz-section h2 {{ color: #e85d26; }}
+  .wizz-table {{ width: 100%; border-collapse: collapse; font-size: 0.88rem; margin-bottom: 6px; }}
+  .wizz-table th, .wizz-table td {{ text-align: left; padding: 9px 12px; border-bottom: 1px solid #e4e8ee; vertical-align: top; }}
+  .wizz-table th {{ background: #fff3ee; color: #c0440f; font-weight: 600; }}
+  .wizz-table tr:hover td {{ background: #fffaf7; }}
+  .src-badge {{ background: #e8f0fa; color: #1a6fb5; font-size: 0.78rem; padding: 2px 7px; border-radius: 10px; white-space: nowrap; }}
+  .sentiment-badge {{ color: #fff; font-size: 0.78rem; padding: 2px 8px; border-radius: 10px; white-space: nowrap; }}
+  .sent-row {{ display: flex; gap: 6px; margin: 6px 0 10px; flex-wrap: wrap; }}
+  .sent-pip {{ width: 28px; height: 28px; border-radius: 50%; display: inline-block; cursor: default; }}
+  .sent-legend {{ display: flex; gap: 16px; flex-wrap: wrap; font-size: 0.82rem; color: #555; margin-top: 4px; align-items: center; }}
+  .sent-legend span {{ display: flex; align-items: center; gap: 5px; }}
+  .table-note {{ font-size: 0.8rem; color: #888; margin-top: 4px; }}
 </style>
 </head>
 <body>
@@ -355,6 +602,15 @@ html = f"""<!DOCTYPE html>
       {div_chart3}
     </div>
   </div>
+
+  <div class="chart-section">
+    <h2>Chart 4 — Wizz Air: Grounding Trajectory vs PR Moments</h2>
+    <div class="plotly-chart">
+      {div_chart4}
+    </div>
+  </div>
+
+  {div_wizz_narrative}
 
   <div class="sources-section">
     <h2>Data Sources</h2>

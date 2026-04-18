@@ -3,8 +3,12 @@ date,airline,grounded_aircraft,total_gtf_fleet,pct_grounded,source
 2025-02-01,Global,739,2310,32.0,FlightGlobal/Cirium
 2025-07-01,Global,748,2450,30.5,FlightGlobal/Cirium
 2025-10-01,Global,835,2450,34.1,FlightGlobal/Cirium
+2024-06-30,Wizz Air,46,200,23.0,Wizz Air Q1 FY2025 Earnings Call
+2024-09-30,Wizz Air,41,200,20.5,Wizz Air H1 FY2025 Earnings Call
+2025-05-09,Wizz Air,37,200,18.5,Wizz Air FY2025 Annual Results
 2025-07-01,Wizz Air,38,200,19.0,FlightGlobal
 2025-10-01,Wizz Air,41,200,20.5,FlightGlobal
+2025-12-31,Wizz Air,33,200,16.5,Wizz Air Q3 FY2026 Earnings Call
 2025-10-01,Volaris,36,91,39.6,FlightGlobal/Cirium
 2025-10-01,VivaAerobus,28,59,47.5,FlightGlobal/Cirium
 2025-01-01,JetBlue,9,100,9.0,RTX Earnings
