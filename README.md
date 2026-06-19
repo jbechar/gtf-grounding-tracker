@@ -14,18 +14,31 @@ python generate_report.py
 ```
 
 That's it. The script will:
-1. Load `data/grounding_counts.csv`
-2. Generate three charts and save them as PNGs in `charts/`
-3. Produce a self-contained HTML report at `output/report.html` with all charts embedded inline
-4. Print `Done. Open output/report.html to view the report.`
+1. Load `data/grounding_counts.csv`, `data/wizz_air_comms.csv`, `data/ground_day_comparison.csv`, and `data/variant_split.csv`
+2. Build six interactive Plotly charts
+3. Produce a self-contained HTML report at `index.html` with all charts embedded inline
+4. Print `Done. Open index.html to view the report.`
 
-Open `output/report.html` in any browser — no internet connection required.
+Open `index.html` in any browser (requires an internet connection on first load, to pull the Plotly JS library from CDN). This is also the file published via GitHub Pages.
+
+---
+
+## Charts
+
+1. **Global Grounding Trend** — total GTF-powered aircraft grounded worldwide over time
+2. **Most Affected Airlines** — % of each airline's GTF fleet grounded (latest snapshot)
+3. **Groundings vs MRO Recovery** — grounding count against P&W's internal MRO output index
+4. **Wizz Air: Grounding Trajectory vs PR Moments** — Wizz Air's actual grounding numbers plotted against its own public statements, with a sentiment score per statement
+5. **Ground-Day Rate: GTF vs Competing Engines** — PW1000G ground-day rate vs CFM Leap and older engines (CFM56/V2500), via `data/ground_day_comparison.csv`
+6. **A320neo vs A321neo Variant Split** — grounding severity by aircraft variant, via `data/variant_split.csv`
+
+Charts 5 and 6 use Aviation Week Fleet Discovery data (≥30-day grounding threshold), a different methodology from the FlightGlobal/Cirium-based Charts 1–4. See `sources.md` for details — don't directly compare percentages across that boundary.
 
 ---
 
 ## Updating the data
 
-All data lives in **`data/grounding_counts.csv`**. Add a new row each month (or whenever a new public figure is available) and re-run `python generate_report.py`. The report rebuilds automatically.
+All core data lives in **`data/grounding_counts.csv`**. Add a new row each month (or whenever a new public figure is available) and re-run `python generate_report.py`. The report rebuilds automatically.
 
 Column reference:
 
@@ -38,6 +51,8 @@ Column reference:
 | `pct_grounded` | `grounded_aircraft / total_gtf_fleet × 100` |
 | `source` | Publication or earnings call this data point comes from |
 
+`data/wizz_air_comms.csv`, `data/ground_day_comparison.csv`, and `data/variant_split.csv` feed Charts 4, 5, and 6 respectively — see each file's header row for its own column reference.
+
 ---
 
 ## Project structure
@@ -45,11 +60,13 @@ Column reference:
 ```
 gtf-grounding-tracker/
 ├── data/
-│   └── grounding_counts.csv   ← add new rows here
-├── charts/                    ← auto-generated PNGs
-├── output/
-│   └── report.html            ← auto-generated report
-├── generate_report.py         ← single entry point
+│   ├── grounding_counts.csv        ← core series, add new rows here
+│   ├── wizz_air_comms.csv          ← Wizz Air public statements vs reality (Chart 4)
+│   ├── ground_day_comparison.csv   ← GTF vs Leap vs legacy engines (Chart 5)
+│   └── variant_split.csv           ← A320neo vs A321neo (Chart 6)
+├── index.html                   ← auto-generated report (published via GitHub Pages, root)
+├── charts/                      ← legacy static PNGs, superseded by interactive charts in index.html
+├── generate_report.py           ← single entry point
 ├── requirements.txt
 ├── README.md
 └── sources.md

@@ -18,10 +18,7 @@ DATA_FILE        = ROOT / "data" / "grounding_counts.csv"
 COMMS_FILE       = ROOT / "data" / "wizz_air_comms.csv"
 GROUND_DAY_FILE  = ROOT / "data" / "ground_day_comparison.csv"
 VARIANT_FILE     = ROOT / "data" / "variant_split.csv"
-DOCS_DIR   = ROOT / "docs"
-REPORT_FILE = DOCS_DIR / "index.html"
-
-DOCS_DIR.mkdir(exist_ok=True)
+REPORT_FILE = ROOT / "index.html"
 
  
 # Colour palette
@@ -805,4 +802,4 @@ print("Writing report …")
 REPORT_FILE.write_text(html, encoding="utf-8")
 print(f"  Saved {REPORT_FILE.relative_to(ROOT)}")
 print()
-print("Done. Open docs/index.html to view the report.")
+print("Done. Open index.html to view the report.")
