@@ -9,7 +9,7 @@ import pandas as pd
 import plotly.graph_objects as go
 import plotly.io as pio
 
-# ---------------------------------------------------------------------------
+ 
 # Paths
 # ---------------------------------------------------------------------------
 ROOT             = Path(__file__).parent
@@ -33,9 +33,9 @@ PALETTE = {
     "mid":      "#2eaa6e",
 }
 
-# ---------------------------------------------------------------------------
+ 
 # Load data
-# ---------------------------------------------------------------------------
+ 
 print("Loading data …")
 df          = pd.read_csv(DATA_FILE, parse_dates=["date"])
 df["airline"] = df["airline"].str.strip()
@@ -49,9 +49,10 @@ df_wizz  = df_airlines[df_airlines["airline"] == "Wizz Air"].sort_values("date")
 df_ground_day = pd.read_csv(GROUND_DAY_FILE, parse_dates=["as_of_date"]) if GROUND_DAY_FILE.exists() else None
 df_variant    = pd.read_csv(VARIANT_FILE,    parse_dates=["as_of_date"]) if VARIANT_FILE.exists()    else None
 
-# ---------------------------------------------------------------------------
+
+ 
 # Shared layout defaults
-# ---------------------------------------------------------------------------
+ 
 BASE_LAYOUT = dict(
     paper_bgcolor=PALETTE["card_bg"],
     plot_bgcolor=PALETTE["card_bg"],
@@ -88,9 +89,9 @@ def fig_to_div(fig: go.Figure, first: bool = False) -> str:
     )
 
 
-# ---------------------------------------------------------------------------
+ 
 # Chart 1 — Global grounding trend over time
-# ---------------------------------------------------------------------------
+ 
 def chart1() -> str:
     fig = go.Figure()
     fig.add_trace(go.Scatter(
@@ -164,9 +165,9 @@ def chart2() -> str:
     return fig_to_div(fig)
 
 
-# ---------------------------------------------------------------------------
+ 
 # Chart 3 — Groundings vs MRO Recovery (dual axis)
-# ---------------------------------------------------------------------------
+ 
 def chart3() -> str:
     mro_data = pd.DataFrame({
         "date":      pd.to_datetime(["2024-01-01", "2025-01-01", "2025-10-01"]),
@@ -225,9 +226,9 @@ def chart3() -> str:
     return fig_to_div(fig)
 
 
-# ---------------------------------------------------------------------------
+ 
 # Sentiment helpers
-# ---------------------------------------------------------------------------
+ 
 SENTIMENT_COLOR = {
     1: "#d62728",
     2: "#ff7f0e",
@@ -244,9 +245,9 @@ SENTIMENT_LABEL = {
 }
 
 
-# ---------------------------------------------------------------------------
+ 
 # Chart 4 — Wizz Air grounding trajectory vs PR moments
-# ---------------------------------------------------------------------------
+ 
 def chart4() -> str:
     fig = go.Figure()
     fig.add_trace(go.Scatter(
@@ -1069,7 +1070,7 @@ sources_rows = "\n".join(
 
 # ---------------------------------------------------------------------------
 # HTML report
-# ---------------------------------------------------------------------------
+ 
 html = f"""<!DOCTYPE html>
 <html lang="en">
 <head>
