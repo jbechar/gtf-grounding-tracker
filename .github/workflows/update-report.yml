@@ -6,6 +6,7 @@ on:
       - main
     paths:
       - 'data/grounding_counts.csv'
+      - 'generate_report.py'
   workflow_dispatch:
 
 permissions:
