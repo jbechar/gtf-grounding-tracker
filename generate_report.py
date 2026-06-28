@@ -12,13 +12,12 @@ import plotly.io as pio
 # ---------------------------------------------------------------------------
 # Paths
 # ---------------------------------------------------------------------------
-ROOT        = Path(__file__).parent
-DATA_FILE   = ROOT / "data" / "grounding_counts.csv"
-COMMS_FILE  = ROOT / "data" / "wizz_air_comms.csv"
-DOCS_DIR    = ROOT / "docs"
-REPORT_FILE = DOCS_DIR / "index.html"
-
-DOCS_DIR.mkdir(exist_ok=True)
+ROOT             = Path(__file__).parent
+DATA_FILE        = ROOT / "data" / "grounding_counts.csv"
+COMMS_FILE       = ROOT / "data" / "wizz_air_comms.csv"
+GROUND_DAY_FILE  = ROOT / "data" / "ground_day_comparison.csv"
+VARIANT_FILE     = ROOT / "data" / "variant_split.csv"
+REPORT_FILE      = ROOT / "index.html"
 
 # ---------------------------------------------------------------------------
 # Design tokens
@@ -46,6 +45,9 @@ df_airlines = df[df["airline"] != "Global"].copy()
 df_comms = pd.read_csv(COMMS_FILE, parse_dates=["date"])
 df_comms = df_comms.sort_values("date").reset_index(drop=True)
 df_wizz  = df_airlines[df_airlines["airline"] == "Wizz Air"].sort_values("date").copy()
+
+df_ground_day = pd.read_csv(GROUND_DAY_FILE, parse_dates=["as_of_date"]) if GROUND_DAY_FILE.exists() else None
+df_variant    = pd.read_csv(VARIANT_FILE,    parse_dates=["as_of_date"]) if VARIANT_FILE.exists()    else None
 
 # ---------------------------------------------------------------------------
 # Shared layout defaults
@@ -320,25 +322,67 @@ def chart4() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Chart 5 — Multi-airline grounding timeline comparison
+# Chart 5 — Ground-day rate: GTF vs competing engine families
+# (requires data/ground_day_comparison.csv; falls back to airline timeline if absent)
 # ---------------------------------------------------------------------------
 def chart5() -> str:
-    """Lines for each airline with ≥2 data points, normalised to pct_grounded."""
+    if df_ground_day is not None:
+        df_gd = df_ground_day.copy()
+        df_gd["mid"] = (df_gd["ground_day_pct_low"] + df_gd["ground_day_pct_high"]) / 2
+        df_gd["range_label"] = df_gd.apply(
+            lambda r: f"{r['ground_day_pct_low']:.0f}%"
+            if r["ground_day_pct_low"] == r["ground_day_pct_high"]
+            else f"{r['ground_day_pct_low']:.0f}–{r['ground_day_pct_high']:.0f}%",
+            axis=1,
+        )
+        bar_colors = [PALETTE["accent"], PALETTE["mid"], PALETTE["muted"]]
+        fig = go.Figure()
+        fig.add_trace(go.Bar(
+            y=df_gd["engine_family"],
+            x=df_gd["mid"],
+            orientation="h",
+            marker_color=bar_colors[: len(df_gd)],
+            text=df_gd["range_label"],
+            textposition="outside",
+            textfont=dict(family=MONO, color=PALETTE["text"]),
+            error_x=dict(
+                type="data", symmetric=False,
+                array=df_gd["ground_day_pct_high"] - df_gd["mid"],
+                arrayminus=df_gd["mid"] - df_gd["ground_day_pct_low"],
+                color=PALETTE["muted"], thickness=1.2,
+            ),
+            hovertemplate="<b>%{y}</b><br>Ground-day rate: %{text}<extra></extra>",
+        ))
+        as_of = df_gd["as_of_date"].max().strftime("%b %Y")
+        fig.update_layout(
+            **BASE_LAYOUT,
+            title=dict(text="Ground-Day Rate: GTF vs Competing Engine Families",
+                       font=dict(size=15, color=PALETTE["text"])),
+            xaxis=dict(title="% of days fleet is grounded (ground-day rate)",
+                       range=[0, 45], **DARK_AXIS),
+            yaxis=dict(title="", **DARK_AXIS),
+            showlegend=False,
+            annotations=[dict(
+                text=f"Source: Aviation Week Fleet Discovery / Tracked Aircraft Utilization, as of {as_of}",
+                xref="paper", yref="paper", x=0, y=-0.18, showarrow=False,
+                font=dict(size=10, color=PALETTE["muted"]), xanchor="left",
+            )],
+        )
+        print("  Built chart 5 (ground-day rate)")
+        return fig_to_div(fig)
+
+    # Fallback: multi-airline grounding rate timeline
     airlines_with_series = (
         df_airlines.groupby("airline")
-        .filter(lambda g: len(g) >= 2)
-        ["airline"].unique()
+        .filter(lambda g: len(g) >= 2)["airline"].unique()
     )
-    color_cycle = [PALETTE["primary"], PALETTE["accent"], PALETTE["mid"],
-                   "#a78bfa", "#f472b6", "#facc15"]
+    color_cycle = [PALETTE["primary"], PALETTE["accent"], PALETTE["mid"], "#a78bfa"]
     fig = go.Figure()
     for i, airline in enumerate(airlines_with_series):
         sub = df_airlines[df_airlines["airline"] == airline].sort_values("date")
         fig.add_trace(go.Scatter(
-            x=sub["date"],
-            y=sub["pct_grounded"],
-            mode="lines+markers",
-            name=airline,
+            x=sub["date"], y=sub["pct_grounded"],
+            mode="lines+markers", name=airline,
             line=dict(color=color_cycle[i % len(color_cycle)], width=2.5),
             marker=dict(size=8),
             hovertemplate=f"<b>{airline}</b><br>%{{x|%b %Y}}<br>Grounded: %{{y:.1f}}%<extra></extra>",
@@ -349,30 +393,62 @@ def chart5() -> str:
                    font=dict(size=15, color=PALETTE["text"])),
         xaxis=dict(title="Date", tickformat="%b %Y", **DARK_AXIS),
         yaxis=dict(title="% of GTF Fleet Grounded", **DARK_AXIS),
-        legend=dict(
-            bgcolor="rgba(22,27,34,0.9)", borderwidth=1, bordercolor=PALETTE["border"],
-        ),
+        legend=dict(bgcolor="rgba(22,27,34,0.9)", borderwidth=1, bordercolor=PALETTE["border"]),
     )
-    print("  Built chart 5")
+    print("  Built chart 5 (airline timeline fallback)")
     return fig_to_div(fig)
 
 
 # ---------------------------------------------------------------------------
-# Chart 6 — Fleet size vs grounded count (bubble scatter, latest per airline)
+# Chart 6 — A320neo vs A321neo variant-level grounding severity
+# (requires data/variant_split.csv; falls back to bubble scatter if absent)
 # ---------------------------------------------------------------------------
 def chart6() -> str:
-    latest = (
-        df_airlines
-        .sort_values("date")
-        .groupby("airline", as_index=False)
-        .last()
-    )
+    if df_variant is not None:
+        df_v = df_variant.copy()
+        fig = go.Figure()
+        fig.add_trace(go.Bar(
+            x=df_v["variant"], y=df_v["pct_parked_or_stored"],
+            name="% parked or stored",
+            marker_color=PALETTE["primary"],
+            text=[f"{v:.0f}%" for v in df_v["pct_parked_or_stored"]],
+            textposition="outside",
+            textfont=dict(family=MONO, color=PALETTE["text"]),
+            hovertemplate="<b>%{x}</b><br>Parked/stored: %{y:.0f}%<extra></extra>",
+        ))
+        fig.add_trace(go.Bar(
+            x=df_v["variant"], y=df_v["ground_day_pct_sep2025"],
+            name="Ground-day % (Sep 2025)",
+            marker_color=PALETTE["accent"],
+            text=[f"{v:.0f}%" for v in df_v["ground_day_pct_sep2025"]],
+            textposition="outside",
+            textfont=dict(family=MONO, color=PALETTE["text"]),
+            hovertemplate="<b>%{x}</b><br>Ground-day (Sep 2025): %{y:.0f}%<extra></extra>",
+        ))
+        as_of = df_v["as_of_date"].max().strftime("%b %Y")
+        fig.update_layout(
+            **BASE_LAYOUT,
+            title=dict(text="A320neo vs A321neo: Variant-Level Grounding Severity",
+                       font=dict(size=15, color=PALETTE["text"])),
+            xaxis=dict(title="", **DARK_AXIS),
+            yaxis=dict(title="%", range=[0, 60], **DARK_AXIS),
+            barmode="group",
+            legend=dict(bgcolor="rgba(22,27,34,0.9)", borderwidth=1, bordercolor=PALETTE["border"]),
+            annotations=[dict(
+                text=f"Source: Aviation Week Fleet Discovery, as of {as_of}",
+                xref="paper", yref="paper", x=0, y=-0.18, showarrow=False,
+                font=dict(size=10, color=PALETTE["muted"]), xanchor="left",
+            )],
+        )
+        print("  Built chart 6 (variant split)")
+        return fig_to_div(fig)
+
+    # Fallback: fleet size vs grounded bubble scatter
+    latest = df_airlines.sort_values("date").groupby("airline", as_index=False).last()
     fig = go.Figure()
     fig.add_trace(go.Scatter(
-        x=latest["total_gtf_fleet"],
-        y=latest["grounded_aircraft"],
-        mode="markers+text",
-        text=latest["airline"],
+        x=latest["total_gtf_fleet"], y=latest["grounded_aircraft"],
+        mode="markers+text", text=latest["airline"],
         textposition="top center",
         textfont=dict(color=PALETTE["muted"], size=11),
         marker=dict(
@@ -383,17 +459,11 @@ def chart6() -> str:
             colorbar=dict(
                 title=dict(text="% Grounded", font=dict(color=PALETTE["muted"])),
                 tickfont=dict(family=MONO, color=PALETTE["muted"]),
-                bgcolor=PALETTE["card_bg"],
-                bordercolor=PALETTE["border"],
+                bgcolor=PALETTE["card_bg"], bordercolor=PALETTE["border"],
             ),
             line=dict(color=PALETTE["border"], width=1),
         ),
-        hovertemplate=(
-            "<b>%{text}</b><br>"
-            "Total GTF fleet: %{x}<br>"
-            "Grounded: %{y}<br>"
-            "<extra></extra>"
-        ),
+        hovertemplate="<b>%{text}</b><br>Fleet: %{x}<br>Grounded: %{y}<extra></extra>",
     ))
     fig.update_layout(
         **BASE_LAYOUT,
@@ -403,7 +473,7 @@ def chart6() -> str:
         yaxis=dict(title="Aircraft Grounded", **DARK_AXIS),
         showlegend=False,
     )
-    print("  Built chart 6")
+    print("  Built chart 6 (bubble scatter fallback)")
     return fig_to_div(fig)
 
 
@@ -767,22 +837,59 @@ def chart_f4() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Structural vs Bridge section — timeline slippage narrative
+# Structural vs Bridge section
+# Uses ground_day / variant data when available; falls back to slippage table.
 # ---------------------------------------------------------------------------
 def structural_vs_bridge_section() -> str:
+    if df_ground_day is not None and df_variant is not None:
+        mro_latest    = 139
+        mro_growth    = mro_latest - 100
+        gtf_gd        = df_ground_day.loc[df_ground_day["engine_family"].str.contains("PW1000G"), "ground_day_pct_low"].iloc[0]
+        leap_low, leap_high = df_ground_day.loc[df_ground_day["engine_family"] == "CFM Leap", ["ground_day_pct_low", "ground_day_pct_high"]].iloc[0]
+        leg_low,  leg_high  = df_ground_day.loc[df_ground_day["engine_family"].str.contains("legacy"), ["ground_day_pct_low", "ground_day_pct_high"]].iloc[0]
+        a320_pct = df_variant.loc[df_variant["variant"].str.contains("A320neo"), "pct_parked_or_stored"].iloc[0]
+        a321_pct = df_variant.loc[df_variant["variant"].str.contains("A321neo"), "pct_parked_or_stored"].iloc[0]
+        return f"""
+<div class="card" style="margin-top:16px;border-left:3px solid {PALETTE['primary']}">
+  <h3 class="card-label" style="color:{PALETTE['primary']}">Reading Charts 5 &amp; 6: Structural Backlog, Not a Short Bridge</h3>
+  <div style="color:{PALETTE['muted']};font-size:0.93rem;line-height:1.7">
+    <p>
+      P&amp;W's own MRO output index rose from a baseline of 100 to roughly {mro_latest}
+      (+{mro_growth}%) by late 2025 — genuine progress, and worth taking at face value.
+      But a {mro_growth}% throughput improvement against a backlog this large is a rate of
+      clearance, not a resolution date, and it has to be read against the fleet's actual
+      availability: the GTF-powered fleet's ground-day rate sits around <span class="mono accent-text">{gtf_gd:.0f}%</span>,
+      well above the {leap_low:.0f}–{leap_high:.0f}% rate of its closest rival (CFM Leap) and even
+      above the {leg_low:.0f}–{leg_high:.0f}% rate of the older, more maintenance-hungry
+      engines (CFM56, V2500) that GTF-powered aircraft were meant to retire.
+    </p>
+    <p style="margin-top:12px">
+      That comparison is the tell. An engine family running less available than the aircraft it
+      replaces, more than two years into a stated three-year inspection programme, points to a
+      multi-year structural backlog rather than a bridge that clears on its own. The variant split
+      sharpens this further: A320neo aircraft show <span class="mono accent-text">{a320_pct:.0f}%</span> parked or stored,
+      against <span class="mono">{a321_pct:.0f}%</span> for the A321neo — recovery is uneven by variant, which
+      argues against treating the backlog as a single countdown with one end date.
+    </p>
+    <p style="margin-top:12px">
+      <strong style="color:{PALETTE['text']}">Working assumption:</strong> this should be modelled as a multi-year structural
+      cost, not a short-term bridge that resolves cleanly once MRO throughput catches up.
+    </p>
+  </div>
+</div>"""
+
+    # Fallback: slippage table
     slippage_items = [
-        ("May 2024",  "End of calendar 2026", "Initial P&W compensation agreement horizon"),
-        ("Nov 2024",  "F27 (≈ Mar 2027)",     "H1 FY2025 results — quietly pushed 3 months"),
-        ("Jun 2025",  "End of calendar 2027", "FY2025 annual results — full 12-month slip acknowledged"),
-        ("Jul 2025",  "March 2027",            "Q1 FY2026 results — reiterated, no improvement"),
-        ("Jan 2026",  "End of calendar 2027", "Q3 FY2026 — P&W compensation now extended to match"),
+        ("May 2024", "End of calendar 2026", "Initial P&W compensation agreement horizon"),
+        ("Nov 2024", "F27 (≈ Mar 2027)",     "H1 FY2025 results — quietly pushed 3 months"),
+        ("Jun 2025", "End of calendar 2027", "FY2025 annual results — full 12-month slip acknowledged"),
+        ("Jul 2025", "March 2027",            "Q1 FY2026 results — reiterated, no improvement"),
+        ("Jan 2026", "End of calendar 2027", "Q3 FY2026 — P&W compensation now extended to match"),
     ]
     rows_html = "\n".join(
-        f"""<tr>
-          <td><span class="mono">{d}</span></td>
-          <td><span class="mono accent-text">{t}</span></td>
-          <td style="color:{PALETTE['muted']};font-size:0.88rem">{n}</td>
-        </tr>"""
+        f'<tr><td><span class="mono">{d}</span></td>'
+        f'<td><span class="mono accent-text">{t}</span></td>'
+        f'<td style="color:{PALETTE["muted"]};font-size:0.88rem">{n}</td></tr>'
         for d, t, n in slippage_items
     )
     return f"""
@@ -790,8 +897,7 @@ def structural_vs_bridge_section() -> str:
   <h3 class="card-label" style="color:{PALETTE['accent']}">Structural vs Bridge: Resolution Timeline Slippage</h3>
   <p style="color:{PALETTE['muted']};font-size:0.92rem;margin:8px 0 16px">
     Each public guidance update moved the stated resolution date further out.
-    Net slip from first statement to latest:
-    <span class="mono accent-text" style="font-size:1.05rem">12 months</span>.
+    Net slip: <span class="mono accent-text">12 months</span>.
   </p>
   <div style="overflow-x:auto">
     <table class="data-table">
@@ -1483,4 +1589,4 @@ print("Writing report …")
 REPORT_FILE.write_text(html, encoding="utf-8")
 print(f"  Saved {REPORT_FILE.relative_to(ROOT)}")
 print()
-print("Done. Open docs/index.html to view the report.")
+print("Done. Open index.html to view the report.")
